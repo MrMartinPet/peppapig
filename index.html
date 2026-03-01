@@ -1,0 +1,771 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>EscapeRoom — Spotlight Bokstavsjakt + Avatar Shop</title>
+<style>
+  :root{
+    --ui-contrast:#111;
+    --accent:#ff5b6b;
+    --muted:#9aa0a6;
+    --gold:#ffd36b;
+  }
+  html,body{height:100%;margin:0;background:#000;color:#eee;font-family:Inter,system-ui,Segoe UI,Roboto,Arial;user-select:none}
+  /* Layout */
+  #app{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+  header{height:56px;display:flex;align-items:center;justify-content:space-between;padding:8px 14px;border-bottom:1px solid rgba(255,255,255,0.03);background:transparent;z-index:60}
+  header .title{font-weight:700}
+  header .controls{display:flex;gap:10px;align-items:center}
+  .btn{background:var(--accent);border:none;padding:8px 12px;border-radius:8px;color:#111;font-weight:700;cursor:pointer}
+  main{flex:1;display:flex;gap:12px;padding:12px;box-sizing:border-box}
+  /* Scene */
+  #sceneWrap{flex:1;position:relative;border-radius:10px;overflow:hidden;background:#000;border:1px solid rgba(255,255,255,0.02)}
+  #sceneCanvas{width:100%;height:100%;position:relative;touch-action:none}
+  /* mörk overlay som vi manipulerar för spotlight */
+  #darkLayer{position:absolute;inset:0;background:radial-gradient(circle at 50% 50%, rgba(255,255,255,0) 0, rgba(0,0,0,0.0001) 60px, rgba(0,0,0,0.98) 120px);pointer-events:none;mix-blend-mode:normal;z-index:40}
+  /* Items */
+  .letterItem{position:absolute;z-index:50;padding:6px 8px;border-radius:6px;background:linear-gradient(180deg,#121212,#0c0c0c);color:var(--gold);font-weight:900;letter-spacing:1px;box-shadow:0 10px 30px rgba(0,0,0,0.7);transform:translate(-50%,-50%) rotate(-6deg);opacity:0;transition:opacity .18s, transform .24s}
+  .letterItem.visible{opacity:1;transform:translate(-50%,-50%) rotate(0deg) scale(1.05)}
+  .distractor{color:#888;font-weight:800;background:rgba(255,255,255,0.02);border-radius:6px;padding:4px 6px}
+  /* Sidebar / mål */
+  #hud{width:360px;max-width:36%;min-width:260px;background:#070707;border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:10px;box-shadow:0 20px 40px rgba(0,0,0,0.7)}
+  .sectionTitle{font-weight:800;color:#fff}
+  #collected{display:flex;gap:8px;flex-wrap:wrap;min-height:60px}
+  .slot{min-width:46px;height:46px;border-radius:8px;background:#0b0b0c;border:1px solid rgba(255,255,255,0.03);display:flex;align-items:center;justify-content:center;font-weight:800;color:var(--muted)}
+  #targetSlots{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  #statusRow{display:flex;justify-content:space-between;align-items:center;gap:10px}
+  .small{font-size:13px;padding:8px 10px}
+  footer{height:46px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px;border-top:1px solid rgba(255,255,255,0.02)}
+  /* Modal / Shop page (hash routing #shop) */
+  #modalRoot{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:200}
+  .modalCard{background:#070707;border-radius:12px;padding:16px;max-width:920px;width:94%;max-height:88vh;overflow:auto;box-shadow:0 20px 50px rgba(0,0,0,0.8)}
+  /* Shop layout (grid) */
+  .shopGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
+  .product{background:#0c0c0d;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.03);display:flex;flex-direction:column;gap:8px;align-items:center}
+  .avatarPreview{width:220px;height:240px;background:linear-gradient(180deg,#0b0b0d,#060606);border-radius:10px;display:flex;align-items:center;justify-content:center;flex-direction:column}
+  .avatarFeature{display:flex;gap:8px;align-items:center;justify-content:space-between}
+  /* responsive adjustments */
+  @media(max-width:980px){
+    main{flex-direction:column}
+    #hud{width:100%;max-width:100%}
+  }
+  /* visual focus ring for spotlight (helpful on desktop) */
+  #cursorSpot{position:absolute;pointer-events:none;border-radius:50%;box-shadow:0 0 60px rgba(255,255,255,0.08), inset 0 0 40px rgba(255,255,255,0.02);z-index:45;mix-blend-mode:screen}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="title">EscapeRoom — Spotlight & Avatar Shop</div>
+    <div class="controls">
+      <div id="timer" style="font-weight:800">02:00</div>
+      <div id="coins" style="padding:6px 10px;border-radius:8px;background:rgba(255,255,255,0.02)">Coins: 0</div>
+      <button class="btn" id="openShopBtn">Butik / Avatar</button>
+      <button class="btn" id="restartBtn">Starta om</button>
+    </div>
+  </header>
+
+  <main>
+    <div id="sceneWrap">
+      <div id="sceneCanvas" tabindex="0"></div>
+      <div id="darkLayer"></div>
+      <div id="cursorSpot" style="width:220px;height:220px;left:50%;top:50%;display:none;"></div>
+    </div>
+
+    <aside id="hud">
+      <div>
+        <div class="sectionTitle">Uppdrag</div>
+        <div id="objective" style="font-size:13px;margin-top:6px">Hitta bokstäverna och placera dem i rätt ord. Spotlighten lyser upp när du drar.</div>
+      </div>
+
+      <div>
+        <div class="sectionTitle">Föremål hittade</div>
+        <div id="collected"></div>
+      </div>
+
+      <div>
+        <div class="sectionTitle">Ord (dra bokstav till ruta)</div>
+        <div id="targetSlots" style="margin-top:8px"></div>
+      </div>
+
+      <div id="statusRow">
+        <div style="font-size:13px;color:var(--muted)" id="foundCount">0 / 0</div>
+        <div style="display:flex;gap:8px">
+          <button class="btn small" id="checkBtn">Kontrollera ord</button>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--muted)">Tips: Använd mus och håll ner vänster musknapp för att svepa spotlighten. Det finns också vilseledande "bokstäver" som inte ingår i ordet.</div>
+    </aside>
+  </main>
+
+  <footer>Mobil/desktop: spotlight är optimerad för mus/trackpad. Shop finns i nytt fönster (#shop).</footer>
+</div>
+
+<!-- Modal / Shop root -->
+<div id="modalRoot"></div>
+
+<script>
+/* ===========================
+   FULL-FEATURED GAME LOGIK
+   - Spotlight (mus-drag) avslöjar items inom radius.
+   - At least 10 ord i pool, random per omgång.
+   - Distractors (bokstavsliknande objekt) förvirrar.
+   - Butik/Avatar på separat hash-sida (#shop) i samma fil.
+   - All text på svenska.
+   =========================== */
+
+/* KONFIGURATION */
+const WORD_POOL = ["MYSTIK","SKALOR","HEMLIGHET","TONTON","NATTEN","SKUGGA","KATAPULT","SPÄNNING","LABYRINT","SPÖKEBOK","GÅTAN","FÖRVRID","SAGOBOK","KAMOUFLA"]; // >=10
+const SPAWN_COUNT_EXTRA = 12; // antal distrators
+const TOTAL_SECONDS = 120;
+const SPOT_RADIUS = 120; // initial spotlight radius pixels
+
+/* STATE */
+let state = {
+  timeLeft: TOTAL_SECONDS,
+  timer: null,
+  running: false,
+  coins: parseInt(localStorage.getItem('coins')||'0',10) || 0,
+  pickedTiles: [], // letters picked and not yet placed
+  placed: [], // placed letters array
+  targetWord: '',
+  allLetterElements: [], // objects with letter, elem, isTarget
+  spotlight: {x:0,y:0,active:false,radius:SPOT_RADIUS}
+};
+
+/* DOM */
+const scene = document.getElementById('sceneCanvas');
+const darkLayer = document.getElementById('darkLayer');
+const cursorSpot = document.getElementById('cursorSpot');
+const timerEl = document.getElementById('timer');
+const coinsEl = document.getElementById('coins');
+const collectedEl = document.getElementById('collected');
+const targetSlots = document.getElementById('targetSlots');
+const foundCount = document.getElementById('foundCount');
+const modalRoot = document.getElementById('modalRoot');
+
+/* Init view sizes */
+function sceneSize(){
+  const r = document.getElementById('sceneWrap').getBoundingClientRect();
+  return {w: Math.max(600, r.width), h: Math.max(400, r.height)};
+}
+
+/* Utility */
+function randInt(a,b){return Math.floor(Math.random()*(b-a+1))+a}
+function pickWord(){ return WORD_POOL[Math.floor(Math.random()*WORD_POOL.length)].toUpperCase(); }
+function formatTime(sec){ const m=Math.floor(sec/60).toString().padStart(2,'0'); const s=(sec%60).toString().padStart(2,'0'); return `${m}:${s}` }
+
+/* ---------- SPOTLIGHT RENDER ---------- */
+/* We update #darkLayer background radial-gradient to center at spotlight */
+function updateDarkLayer(){
+  const s = state.spotlight;
+  // when inactive, fully black
+  if(!s.active){
+    darkLayer.style.background = 'radial-gradient(circle at 50% 50%, rgba(0,0,0,0.0) 0px, rgba(0,0,0,0.0) 0px, rgba(0,0,0,1) 0px)';
+    cursorSpot.style.display='none';
+    return;
+  }
+  // compute percent positions relative to container
+  const rect = scene.getBoundingClientRect();
+  const px = ((s.x - rect.left)/rect.width)*100;
+  const py = ((s.y - rect.top)/rect.height)*100;
+  const rpx = (s.radius/rect.width)*100;
+  // radial-gradient: transparent in center, then black overlay
+  darkLayer.style.background = `radial-gradient(circle at ${px}% ${py}%, rgba(0,0,0,0) 0px, rgba(0,0,0,0) ${s.radius}px, rgba(0,0,0,0.98) ${Math.round(s.radius*1.6)}px)`;
+  // cursorSpot position/size
+  cursorSpot.style.width = (s.radius*2) + 'px';
+  cursorSpot.style.height = (s.radius*2) + 'px';
+  cursorSpot.style.left = (s.x - s.radius) + 'px';
+  cursorSpot.style.top = (s.y - s.radius) + 'px';
+  cursorSpot.style.display='block';
+}
+
+/* ---------- GAME SPAWNING ---------- */
+function clearScene(){
+  scene.innerHTML = '';
+  state.allLetterElements = [];
+  collectedEl.innerHTML = '';
+  targetSlots.innerHTML = '';
+}
+function spawnRound(){
+  clearScene();
+  state.targetWord = pickWord();
+  state.placed = new Array(state.targetWord.length).fill('');
+  // spawn letters for target word scattered
+  const {w,h} = sceneSize();
+  // compute positions avoiding edges
+  const safePad = 40;
+  // spawn each letter as hidden item (letterItem)
+  for(let i=0;i<state.targetWord.length;i++){
+    const ch = state.targetWord[i];
+    const x = randInt(safePad, w-safePad);
+    const y = randInt(safePad, h-safePad);
+    const elem = createLetterElement(ch, x, y, true);
+    scene.appendChild(elem);
+    state.allLetterElements.push({letter:ch, elem:elem, isTarget:true, found:false});
+  }
+  // spawn distracting items that look like letters but not in word
+  const lettersPool = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  for(let i=0;i<SPAWN_COUNT_EXTRA;i++){
+    const ch = lettersPool.charAt(randInt(0,lettersPool.length-1));
+    // ensure not too many exact target duplicates - still allow confusion
+    const x = randInt(safePad, w-safePad);
+    const y = randInt(safePad, h-safePad);
+    const elem = createLetterElement(ch, x, y, false, true);
+    scene.appendChild(elem);
+    state.allLetterElements.push({letter:ch, elem:elem, isTarget:false, found:false});
+  }
+  // set target slots UI
+  renderTargetSlots();
+  updateHUD();
+}
+
+/* create DOM element */
+function createLetterElement(char, x, y, isTarget, isDistractor=false){
+  const el = document.createElement('div');
+  el.className = 'letterItem';
+  if(isDistractor) el.classList.add('distractor');
+  el.textContent = char;
+  el.style.left = x + 'px';
+  el.style.top = y + 'px';
+  el.style.fontSize = (18 + Math.random()*18) + 'px';
+  el.dataset.letter = char;
+  el.dataset.isTarget = isTarget ? '1' : '0';
+  // add mouse interactions: reveal when inside spotlight (handled by updateVisibility)
+  el.addEventListener('click', ()=> tryPick(el));
+  return el;
+}
+
+/* ---------- VISIBILITY CHECK (called on pointer move) ---------- */
+function updateVisibility(){
+  const s = state.spotlight;
+  if(!s.active){ // hide all
+    state.allLetterElements.forEach(obj=> obj.elem.classList.remove('visible'));
+    return;
+  }
+  // compute for each element distance to spotlight center
+  const rect = scene.getBoundingClientRect();
+  state.allLetterElements.forEach(obj=>{
+    if(obj.found) return; // once found, keep visible in collected area instead
+    const elRect = obj.elem.getBoundingClientRect();
+    const cx = elRect.left + elRect.width/2;
+    const cy = elRect.top + elRect.height/2;
+    const dx = cx - s.x;
+    const dy = cy - s.y;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    if(dist <= s.radius * 0.95){
+      obj.elem.classList.add('visible');
+    } else {
+      obj.elem.classList.remove('visible');
+    }
+  });
+}
+
+/* ---------- PICKING / COLLECTING LETTERS ---------- */
+function tryPick(domElem){
+  // only allow pick if visible in spotlight
+  const s = state.spotlight;
+  if(!s.active) return;
+  const elRect = domElem.getBoundingClientRect();
+  const cx = elRect.left + elRect.width/2;
+  const cy = elRect.top + elRect.height/2;
+  const dx = cx - s.x; const dy = cy - s.y;
+  const dist = Math.sqrt(dx*dx + dy*dy);
+  if(dist > s.radius) return;
+  // find matching object in state
+  const obj = state.allLetterElements.find(o=>o.elem === domElem);
+  if(!obj || obj.found) return;
+  // collect: mark found, hide from scene, add to collected pool
+  obj.found = true;
+  domElem.remove();
+  if(obj.isTarget){
+    // reward coins and add letter tile
+    state.coins += 8;
+    state.pickedTiles.push(obj.letter);
+  } else {
+    // distractor - smaller reward or none
+    state.coins += 2;
+    // optionally show small message (skipped to be minimal)
+  }
+  renderCollected();
+  updateHUD();
+  checkAutoPlaced();
+}
+
+/* ---------- COLLECTED UI & TARGET SLOTS ---------- */
+function renderCollected(){
+  collectedEl.innerHTML = '';
+  state.pickedTiles.forEach((ch, idx)=>{
+    const slot = document.createElement('div');
+    slot.className = 'slot';
+    slot.textContent = ch;
+    slot.draggable = true;
+    slot.dataset.idx = idx;
+    slot.addEventListener('dragstart', onDragStart);
+    slot.addEventListener('click', ()=> quickPlace(idx));
+    collectedEl.appendChild(slot);
+  });
+  coinsEl.textContent = 'Coins: ' + state.coins;
+}
+function renderTargetSlots(){
+  targetSlots.innerHTML = '';
+  for(let i=0;i<state.targetWord.length;i++){
+    const s = document.createElement('div');
+    s.className = 'slot';
+    s.dataset.slot = i;
+    s.textContent = state.placed[i] || '';
+    s.addEventListener('dragover', e=> e.preventDefault());
+    s.addEventListener('drop', onDropToSlot);
+    s.addEventListener('click', ()=> removeFromSlot(i));
+    targetSlots.appendChild(s);
+  }
+}
+
+/* Drag-drop handlers */
+let dragIndex = null;
+function onDragStart(e){
+  dragIndex = e.target.dataset.idx;
+  e.dataTransfer.setData('text/plain', dragIndex);
+}
+function onDropToSlot(e){
+  e.preventDefault();
+  const idx = parseInt(e.dataTransfer.getData('text/plain'));
+  const slot = parseInt(e.currentTarget.dataset.slot);
+  placeTileAt(idx, slot);
+}
+
+/* quick place by click: place in first empty slot */
+function quickPlace(idx){
+  const firstEmpty = state.placed.findIndex(x=>!x);
+  if(firstEmpty === -1){
+    // no empty -> place into first slot (swap)
+    placeTileAt(idx, 0);
+  } else {
+    placeTileAt(idx, firstEmpty);
+  }
+}
+function placeTileAt(idx, slot){
+  idx = parseInt(idx);
+  slot = parseInt(slot);
+  if(isNaN(idx) || isNaN(slot)) return;
+  const tile = state.pickedTiles[idx];
+  if(!tile) return;
+  // if slot occupied, return that tile to pickedTiles
+  if(state.placed[slot]){
+    state.pickedTiles.push(state.placed[slot]);
+  }
+  state.placed[slot] = tile;
+  // remove original picked tile (we must find first occurrence)
+  state.pickedTiles.splice(idx,1);
+  renderCollected();
+  renderTargetSlots();
+  checkWinCondition();
+}
+function removeFromSlot(slot){
+  const t = state.placed[slot];
+  if(!t) return;
+  state.pickedTiles.push(t);
+  state.placed[slot] = '';
+  renderCollected();
+  renderTargetSlots();
+}
+
+/* ---------- GAME CHECKS ---------- */
+function checkAutoPlaced(){
+  // optionally auto-place if only one empty slot left and only one matching letter available etc.
+  // keep simple: update counters
+  updateHUD();
+}
+function updateHUD(){
+  const totalTargets = state.allLetterElements.filter(o=>o.isTarget).length;
+  const foundTargets = state.allLetterElements.filter(o=>o.isTarget && o.found).length;
+  foundCount.textContent = `${foundTargets} / ${totalTargets}`;
+  coinsEl.textContent = 'Coins: ' + state.coins;
+  timerEl.textContent = formatTime(state.timeLeft);
+}
+function checkWinCondition(){
+  if(state.placed.every(x=>x && x.length>0)){
+    const formed = state.placed.join('');
+    if(formed === state.targetWord){
+      winRound();
+    } else {
+      // give small penalty: -10s
+      state.timeLeft = Math.max(0, state.timeLeft - 10);
+      timerEl.textContent = formatTime(state.timeLeft);
+      flashMessage(`Fel ord: "${formed}". -10s.`);
+      playScary();
+      if(state.timeLeft <= 0) loseRound();
+    }
+  }
+}
+
+/* ---------- START / TIMER ---------- */
+function startGame(){
+  // reset time & spawn
+  state.timeLeft = TOTAL_SECONDS;
+  state.running = true;
+  if(state.timer) clearInterval(state.timer);
+  state.timer = setInterval(()=>{
+    state.timeLeft--;
+    timerEl.textContent = formatTime(state.timeLeft);
+    if(state.timeLeft <= 0){
+      clearInterval(state.timer);
+      state.running = false;
+      loseRound();
+    }
+  },1000);
+  spawnRound();
+}
+
+/* ---------- WIN / LOSE ---------- */
+function winRound(){
+  state.running = false;
+  clearInterval(state.timer);
+  state.coins += 30; // bonus
+  localStorage.setItem('coins', state.coins);
+  showModal(`<div style="text-align:center"><h2 style="color:var(--gold)">RÄTT!</h2><p>Du knäckte ordet "${state.targetWord}". +30 coins.</p><div style="margin-top:8px"><button class="btn" id="nextBtn">Nästa</button></div></div>`);
+  document.getElementById('nextBtn').onclick = ()=>{ hideModal(); startGame(); };
+}
+function loseRound(){
+  showModal(`<div style="text-align:center"><h2 style="color:#ff5b6b">TIDEN SLUT</h2><p>Du hann inte. Ordet var "${state.targetWord}".</p><div style="margin-top:8px"><button class="btn" id="tryBtn">Försök igen</button></div></div>`);
+  document.getElementById('tryBtn').onclick = ()=>{ hideModal(); startGame(); };
+}
+function flashMessage(msg){
+  // small ephemeral modal
+  const id = 'flashMsg';
+  const el = document.createElement('div');
+  el.className='modalCard';
+  el.style.position='fixed'; el.style.left='50%'; el.style.top='16px'; el.style.transform='translateX(-50%)';
+  el.style.background='linear-gradient(180deg,#101010,#070707)'; el.style.padding='8px 12px'; el.style.zIndex=250;
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(()=> el.remove(),1600);
+}
+
+/* ---------- MODAL HELPERS ---------- */
+function showModal(html){
+  modalRoot.style.display = 'flex';
+  modalRoot.innerHTML = `<div class="modalCard">${html}</div>`;
+}
+function hideModal(){ modalRoot.style.display='none'; modalRoot.innerHTML=''; }
+
+/* ---------- SCENE INTERACTIONS (spotlight) ---------- */
+let pointerDown = false;
+function onPointerDown(e){
+  pointerDown = true;
+  const p = (e.touches && e.touches[0]) ? e.touches[0] : e;
+  state.spotlight.x = p.clientX;
+  state.spotlight.y = p.clientY;
+  state.spotlight.active = true;
+  updateDarkLayer();
+  updateVisibility();
+}
+function onPointerMove(e){
+  if(!pointerDown && !e.buttons) {
+    // still update cursor location for hover effect (desktop)
+    // but only show small cursorSpot when moving without drag
+  }
+  const p = (e.touches && e.touches[0]) ? e.touches[0] : e;
+  state.spotlight.x = p.clientX;
+  state.spotlight.y = p.clientY;
+  updateDarkLayer();
+  updateVisibility();
+}
+function onPointerUp(e){
+  pointerDown = false;
+  // keep spotlight visible briefly? we'll hide it
+  state.spotlight.active = false;
+  updateDarkLayer();
+  updateVisibility();
+}
+
+/* ---------- SHOP / AVATAR PAGE (hash routing) ---------- */
+document.getElementById('openShopBtn').addEventListener('click', openShop);
+function openShop(){
+  // build shop HTML with large avatar editor and many purchasable items
+  const owned = JSON.parse(localStorage.getItem('owned')||'{}');
+  const coins = state.coins;
+  const products = [
+    {id:'hat',label:'Hatt',price:30,type:'avatar'},
+    {id:'glasses',label:'Solglasögon',price:25,type:'avatar'},
+    {id:'shirt1',label:'Tröja - Rand',price:20,type:'avatar'},
+    {id:'shirt2',label:'Tröja - Läder',price:28,type:'avatar'},
+    {id:'horse',label:'Häst (husdjur)',price:80,type:'pet'},
+    {id:'cat',label:'Katt (husdjur)',price:40,type:'pet'},
+    {id:'cape',label:'Kappa',price:45,type:'avatar'},
+    {id:'boots',label:'Kängor',price:22,type:'avatar'}
+  ];
+  const productHtml = products.map(p=>`
+    <div class="product" data-id="${p.id}">
+      <div style="font-weight:800">${p.label}</div>
+      <div style="font-size:13px;color:var(--muted)">${p.price} coins</div>
+      <div style="height:8px"></div>
+      <button class="btn small buyBtn">${owned[p.id] ? 'Ägd' : 'Köp'}</button>
+    </div>
+  `).join('');
+  const avatarOwned = Object.keys(owned).filter(k=>owned[k]);
+  const shopHtml = `
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <div style="flex:1;min-width:320px">
+        <div style="display:flex;gap:12px;align-items:center">
+          <div class="avatarPreview" id="avatarPreview"></div>
+          <div style="flex:1">
+            <div style="font-weight:800">Din avatar</div>
+            <div style="font-size:13px;color:var(--muted);margin-top:6px">Ägda: ${avatarOwned.join(', ') || 'Inget'}</div>
+            <div style="margin-top:12px">
+              <label>Tröjfärg: <input id="shirtColor" type="color" value="#2b6fb2"></label>
+            </div>
+            <div style="margin-top:12px"><button class="btn" id="saveAvatarBtn">Spara avatar</button></div>
+          </div>
+        </div>
+        <hr style="margin:12px 0;border-color:rgba(255,255,255,0.03)">
+        <div style="font-weight:800;margin-bottom:8px">Butik</div>
+        <div class="shopGrid">${productHtml}</div>
+      </div>
+      <div style="width:300px;min-width:260px">
+        <div style="font-weight:800">Saldo</div>
+        <div style="font-size:20px;margin-top:8px">${coins} coins</div>
+        <div style="height:18px"></div>
+        <div style="font-weight:800;margin-top:10px">Förhandsvisning</div>
+        <div style="margin-top:8px;font-size:13px;color:var(--muted)">Klicka Köp för att köpa och använda på din avatar. Du kan justera färger och spara.</div>
+        <div style="margin-top:12px;text-align:right"><button class="btn" id="closeShopBtn">Stäng</button></div>
+      </div>
+    </div>
+  `;
+  showModal(shopHtml);
+  // render avatar preview SVG
+  const av = document.getElementById('avatarPreview');
+  av.innerHTML = avatarSVG();
+  // buy button handlers
+  modalRoot.querySelectorAll('.buyBtn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const pid = btn.closest('.product').dataset.id;
+      purchaseItem(pid, btn);
+    });
+  });
+  document.getElementById('closeShopBtn').addEventListener('click', hideModal);
+  document.getElementById('saveAvatarBtn').addEventListener('click', ()=>{
+    const color = document.getElementById('shirtColor').value;
+    const owned = JSON.parse(localStorage.getItem('owned')||'{}');
+    owned.shirtColor = color;
+    localStorage.setItem('owned', JSON.stringify(owned));
+    renderAvatarInUI();
+    hideModal();
+  });
+}
+function purchaseItem(id, btn){
+  const prices = {hat:30,glasses:25,shirt1:20,shirt2:28,horse:80,cat:40,cape:45,boots:22};
+  const price = prices[id] || 20;
+  if(state.coins < price){ alert('Inte tillräckligt med coins'); return; }
+  state.coins -= price;
+  localStorage.setItem('coins', state.coins);
+  const owned = JSON.parse(localStorage.getItem('owned')||'{}');
+  owned[id] = true;
+  localStorage.setItem('owned', JSON.stringify(owned));
+  // update buy button
+  btn.textContent = 'Ägd';
+  coinsEl.textContent = 'Coins: ' + state.coins;
+  renderAvatarInUI();
+}
+
+/* avatar SVG generator (simple, but many customizable parts) */
+function avatarSVG(){
+  const owned = JSON.parse(localStorage.getItem('owned')||'{}');
+  const shirtColor = owned.shirtColor || '#2b6fb2';
+  const hat = owned.hat ? `<rect x="36" y="8" width="48" height="14" rx="6" fill="#3b2b5b"/>` : '';
+  const glasses = owned.glasses ? `<rect x="44" y="40" width="12" height="6" rx="2" fill="#000"/><rect x="64" y="40" width="12" height="6" rx="2" fill="#000"/><rect x="56" y="42" width="8" height="2" fill="#000"/>` : '';
+  return `<svg width="180" height="220" viewBox="0 0 120 150" xmlns="http://www.w3.org/2000/svg">
+    <rect width="120" height="150" rx="10" fill="transparent"/>
+    <circle cx="60" cy="36" r="20" fill="#ffdcb6"/>
+    ${hat}
+    ${glasses}
+    <rect x="32" y="66" width="56" height="36" rx="8" fill="${shirtColor}"/>
+    <text x="50%" y="140" font-size="12" text-anchor="middle" fill="#fff" font-weight="700">Din Avatar</text>
+  </svg>`;
+}
+function renderAvatarInUI(){
+  // small placeholder in header maybe
+  // no-op for now; coins displayed elsewhere
+}
+
+/* ---------- SOUND (procedural) ---------- */
+let audioCtx;
+function initAudio(){
+  if(audioCtx) return;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+}
+function playClick(){
+  initAudio();
+  const o = audioCtx.createOscillator(); o.type='sine'; o.frequency.value = 1000;
+  const g = audioCtx.createGain(); g.gain.value = 0.0001;
+  o.connect(g); g.connect(audioCtx.destination);
+  g.gain.exponentialRampToValueAtTime(0.12, audioCtx.currentTime+0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime+0.18);
+  o.start(); o.stop(audioCtx.currentTime+0.19);
+}
+function playScary(){
+  initAudio();
+  const b = audioCtx.createBuffer(1, audioCtx.sampleRate * 1.2, audioCtx.sampleRate);
+  const d = b.getChannelData(0);
+  for(let i=0;i<d.length;i++) d[i] = (Math.random()*2-1) * Math.exp(-i/d.length*6);
+  const src = audioCtx.createBufferSource(); src.buffer = b;
+  const g = audioCtx.createGain(); g.gain.value = 0.0001;
+  src.connect(g); g.connect(audioCtx.destination);
+  g.gain.exponentialRampToValueAtTime(0.9, audioCtx.currentTime+0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime+1.5);
+  src.start(); src.stop(audioCtx.currentTime+1.6);
+}
+
+/* ---------- EVENTS: pointer for spotlight ---------- */
+scene.addEventListener('pointerdown', e=>{ e.preventDefault(); onPointerDown(e); });
+window.addEventListener('pointermove', e=>{ onPointerMove(e); });
+window.addEventListener('pointerup', e=>{ onPointerUp(e); });
+
+// also support touch
+scene.addEventListener('touchstart', e=>{ onPointerDown(e); }, {passive:false});
+scene.addEventListener('touchmove', e=>{ onPointerMove(e); }, {passive:false});
+scene.addEventListener('touchend', e=>{ onPointerUp(e); });
+
+/* ---------- Helpers: start/restart buttons ---------- */
+document.getElementById('restartBtn').addEventListener('click', ()=>{
+  startGame();
+  playClick();
+});
+document.getElementById('checkBtn').addEventListener('click', ()=> checkWinCondition());
+
+/* ---------- Initialization ---------- */
+function startGame(){
+  // reset data
+  state.pickedTiles = [];
+  state.placed = [];
+  state.allLetterElements = [];
+  state.timeLeft = TOTAL_SECONDS;
+  updateTimeDisplay();
+  // spawn
+  spawnRound();
+  // start timer
+  if(state.timer) clearInterval(state.timer);
+  state.timer = setInterval(()=>{
+    state.timeLeft--;
+    updateTimeDisplay();
+    if(state.timeLeft <= 0){ clearInterval(state.timer); loseRound(); }
+  },1000);
+}
+function updateTimeDisplay(){ timerEl.textContent = formatTime(state.timeLeft); coinsEl.textContent = 'Coins: ' + state.coins }
+
+/* When window resizes we may want to reposition/densify items - keep simple: restart on resize small screen */
+let resizeTimer;
+window.addEventListener('resize', ()=>{ clearTimeout(resizeTimer); resizeTimer = setTimeout(()=>{ /* no-op */ },250); });
+
+/* ---------- Drag & drop & placing already implemented earlier functions integration ---------- */
+function renderCollected(){
+  collectedEl.innerHTML = '';
+  state.pickedTiles.forEach((ch, idx)=>{
+    const slot = document.createElement('div');
+    slot.className = 'slot';
+    slot.textContent = ch;
+    slot.draggable = true;
+    slot.dataset.idx = idx;
+    slot.addEventListener('dragstart', e=> onDragStartLetter(e));
+    slot.addEventListener('click', ()=> quickPlace(idx));
+    collectedEl.appendChild(slot);
+  });
+  renderTargetSlots();
+  coinsEl.textContent = 'Coins: ' + state.coins;
+}
+function onDragStartLetter(e){ dragIndex = e.target.dataset.idx; e.dataTransfer.setData('text/plain', dragIndex); }
+function onDropToSlot(e){ e.preventDefault(); const idx = parseInt(e.dataTransfer.getData('text/plain')); const slot = parseInt(e.currentTarget.dataset.slot); placeTileAt(idx, slot); }
+function renderTargetSlots(){
+  targetSlots.innerHTML = '';
+  for(let i=0;i<state.targetWord.length;i++){
+    const s = document.createElement('div');
+    s.className = 'slot';
+    s.dataset.slot = i;
+    s.textContent = state.placed[i] || '';
+    s.addEventListener('dragover', e=> e.preventDefault());
+    s.addEventListener('drop', onDropToSlot);
+    s.addEventListener('click', ()=> removeFromSlot(i));
+    targetSlots.appendChild(s);
+  }
+}
+function placeTileAt(idx, slot){
+  idx=parseInt(idx); slot=parseInt(slot);
+  if(isNaN(idx) || isNaN(slot)) return;
+  const tile = state.pickedTiles[idx];
+  if(!tile) return;
+  if(state.placed[slot]) state.pickedTiles.push(state.placed[slot]);
+  state.placed[slot] = tile;
+  state.pickedTiles.splice(idx,1);
+  renderCollected();
+  renderTargetSlots();
+  checkWinCondition();
+}
+function quickPlace(idx){
+  const firstEmpty = state.placed.findIndex(x=>!x);
+  if(firstEmpty === -1) placeTileAt(idx, 0); else placeTileAt(idx, firstEmpty);
+}
+function removeFromSlot(slot){
+  const t = state.placed[slot];
+  if(!t) return;
+  state.pickedTiles.push(t);
+  state.placed[slot] = '';
+  renderCollected();
+  renderTargetSlots();
+}
+
+/* ---------- Spawn round integration (ensure not duplicates) ---------- */
+function spawnRound(){
+  clearScene();
+  state.targetWord = pickWord();
+  state.placed = new Array(state.targetWord.length).fill('');
+  state.pickedTiles = [];
+  const rect = scene.getBoundingClientRect();
+  const w = Math.max(700, rect.width);
+  const h = Math.max(480, rect.height);
+  // spawn target letters
+  for(let i=0;i<state.targetWord.length;i++){
+    const ch = state.targetWord[i];
+    const x = randInt(50, w-50);
+    const y = randInt(50, h-50);
+    const el = createLetterElement(ch,x,y,true,false);
+    scene.appendChild(el);
+    state.allLetterElements.push({letter:ch, elem:el, isTarget:true, found:false});
+  }
+  // spawn distractors (some may look like letters)
+  const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  for(let i=0;i<SPAWN_COUNT_EXTRA;i++){
+    const ch = letters.charAt(randInt(0,letters.length-1));
+    const x = randInt(50, w-50);
+    const y = randInt(50, h-50);
+    const el = createLetterElement(ch,x,y,false, Math.random()<0.6);
+    scene.appendChild(el);
+    state.allLetterElements.push({letter:ch, elem:el, isTarget:false, found:false});
+  }
+  renderTargetSlots();
+  updateHUD();
+}
+
+/* ---------- Quick start ---------- */
+startGame();
+
+/* ---------- Small UI helpers ---------- */
+function showModal(html){ modalRoot.style.display='flex'; modalRoot.innerHTML = `<div class="modalCard">${html}</div>`; }
+function hideModal(){ modalRoot.style.display='none'; modalRoot.innerHTML=''; }
+
+/* shop persistence load/save */
+(function loadOwnedAndCoins(){
+  const c = parseInt(localStorage.getItem('coins')||'0',10) || 0;
+  state.coins = c;
+  coinsEl.textContent = 'Coins: ' + state.coins;
+})();
+
+/* small UI actions (open shop from header) already bound earlier */
+document.getElementById('openShopBtn').addEventListener('click', ()=> openShop());
+
+/* play click sound on some interactions */
+document.querySelectorAll('.btn').forEach(b=> b.addEventListener('click', ()=> { try{ playClick(); }catch(e){} }));
+
+</script>
+</body>
+</html>
